@@ -1,0 +1,298 @@
+0000-                 17
+0000-                 18     ;Variables in RAM
+0020-                 19     hr      .eq $20
+0021-                 20     min     .eq $21
+0022-                 21     sec     .eq $22
+0000-                 22
+0000-                 23     ;Defines
+00D8-                 24     timer_init_val .eq 216 ;With 9.8304MHz xtal gives 512 interrupts per second
+0000-                 25
+0000-                 26     ;Fixed purpose registers
+0000-                 27     ;R4 - display pointer
+0000-                 28     ;R5 - interrupt counter 8 LSBs
+0000-                 29     ;R6 - interrupt counter 9th bit, colon state
+0000-                 30     ;R7 - interrupt flag
+0000-                 31
+0000-                 32     ;Set vectors
+0000-                 33             .no $00 ;Set jump to main at reset vector (00h)
+0000-04 09            34 (2)         jmp main
+0002-                 35
+0007                 36             .no $07 ;Set jump to timer ISR at timer interrupt vector (07h)
+0007-24 25            37 (2)         jmp timer_isr
+0009-                 38
+0009-                 39     main:
+0009-34 0C            40 (2)         call startup_init ;Initialize variables and timer
+000B-                 41
+000B-                 42     loop:
+000B-FF               43 (1)         mov A,R7
+000C-C6 0B            44 (2)         jz loop ;Loop until flag is set
+000E-                 45
+000E-CF               46 (1)         dec R7 ;Fastest way to clear interrupt flag
+000F-1D               47 (1)         inc R5 ;Increment interrupt counter
+0010-FD               48 (1)         mov A,R5
+0011-96 1D            49 (2)         jnz skip_msb_update     ;If interrupt counter 8 LSBs == 0, update MSB
+0013-                 50
+0013-FE               51 (1)         mov A,R6
+0014-D3 01            52 (2)         xrl A,#%00000001
+0016-AE               53 (1)         mov R6,A ;Toggle counter MSB state
+0017-                 54
+0017-96 1B            55 (2)         jnz skip_time_update ;If MSB == 0, update time
+0019-14 50            56 (2)         call time_update
+001B-                 57
+001B-                 58     skip_time_update: ;Check time setting buttons every 500ms (every time R5 == 0)
+001B-14 21            59 (2)         call time_set
+001D-                 60
+001D-                 61     skip_msb_update:
+001D-14 81            62 (2)         call display_update
+001F-04 0B            63 (2)         jmp loop
+0021-                 64
+0021-                 65     ;----------------Subroutines----------------
+0021-                 66     ;Uses R0,R5,R6,R7
+0021-                 67     time_set:
+0021-36 30            68 (2)         jt0 min_set ;If hours increment key not pressed, go to minutes setting
+0023-B8 20            69 (2)         mov R0,#hr
+0025-F0               70 (1)         mov A,@R0 ;Load actual minutes value
+0026-37               71 (1)         cpl A
+0027-03 18            72 (2)         add A,#24 ;A = (-hr-1 + 24) -> Z = (++hr == 24)
+0029-96 3F            73 (2)         jnz time_set_store ;Go to part incrementing value once and storing in memory
+002B-23 00            74 (2)         mov A,#0
+002D-A0               75 (1)         mov @R0,A ;Clear minutes
+002E-04 4F            76 (2)         jmp time_set_end
+0030-                 77     min_set:
+0030-56 4F            78 (2)         jt1 time_set_end ;If minutes increment key not pressed, leave
+0032-B8 21            79 (2)         mov R0,#min
+0034-F0               80 (1)         mov A,@R0 ;Load actual minutes value
+0035-37               81 (1)         cpl A
+0036-03 3C            82 (2)         add A,#60 ;A = (-min-1 + 60) -> Z = (++min == 60)
+0038-96 3F            83 (2)         jnz time_set_store ;Go to part incrementing value once and storing in memory
+003A-23 00            84 (2)         mov A,#0
+003C-A0               85 (1)         mov @R0,A ;Clear minutes
+003D-04 4F            86 (2)         jmp time_set_end
+003F-                 87     time_set_store:
+003F-F0               88 (1)         mov A,@R0
+0040-17               89 (1)         inc A
+0041-A0               90 (1)         mov @R0,A ;Increment value pointed by R0
+0042-                 91
+0042-B8 22            92 (2)         mov R0,#sec
+0044-23 00            93 (2)         mov A,#0
+0046-A0               94 (1)         mov @R0,A ;Clear seconds
+0047-                 95
+0047-                 96             ;Reset every internal time countdown value so that first second of the
+0047-                 97             ;newly set time will really last a second
+0047-BD 00            98 (2)         mov R5,#0 ;Clear interrupt counter 8 LSBs
+0049-BE 00            99 (2)         mov R6,#0 ;Clear interrupt counter 9th bit
+004B-BF 00           100 (2)         mov R7,#0 ;Clear interrupt flag
+004D-34 21           101 (2)         call timer_reload ;Set timer register initial value
+004F-                102     time_set_end:
+004F-83              103 (2)         ret
+0050-                104
+0050-                105     ;Uses R0
+0050-                106     time_update:
+0050-B8 22           107 (2)         mov R0,#sec
+0052-F0              108 (1)         mov A,@R0 ;Load actual seconds value
+0053-37              109 (1)         cpl A
+0054-03 3C           110 (2)         add A,#60 ;A = (-sec-1 + 60) -> Z = (++sec == 60)
+0056-96 73           111 (2)         jnz update_store ;Go to part incrementing value once and storing in memory
+0058-23 00           112 (2)         mov A,#0
+005A-A0              113 (1)         mov @R0,A ;Clear seconds
+005B-                114
+005B-B8 21           115 (2)         mov R0,#min
+005D-F0              116 (1)         mov A,@R0 ;Load actual minutes value
+005E-37              117 (1)         cpl A
+005F-03 3C           118 (2)         add A,#60 ;A = (-min-1 + 60) -> Z = (++min == 60)
+0061-96 73           119 (2)         jnz update_store ;Go to part incrementing value once and storing in memory
+0063-23 00           120 (2)         mov A,#0
+0065-A0              121 (1)         mov @R0,A ;Clear minutes
+0066-                122
+0066-B8 20           123 (2)         mov R0,#hr
+0068-F0              124 (1)         mov A,@R0 ;Load actual minutes value
+0069-37              125 (1)         cpl A
+006A-03 18           126 (2)         add A,#24 ;A = (-hr-1 + 24) -> Z = (++hr == 24)
+006C-96 73           127 (2)         jnz update_store ;Go to part incrementing value once and storing in memory
+006E-23 00           128 (2)         mov A,#0
+0070-A0              129 (1)         mov @R0,A ;Clear hours
+0071-04 76           130 (2)         jmp update_end ;Leave
+0073-                131     update_store:
+0073-F0              132 (1)         mov A,@R0
+0074-17              133 (1)         inc A
+0075-A0              134 (1)         mov @R0,A ;Increment value pointed by R0
+0076-                135     update_end:
+0076-83              136 (2)         ret
+0077-                137
+0077-                138     digits:
+0077-                139             .ot ;Open table to check if whole table and all movps are on the same page
+0077-C0              140             .db %11000000 ;0
+0078-F9              141             .db %11111001 ;1
+0079-A4              142             .db %10100100 ;2
+007A-B0              143             .db %10110000 ;3
+007B-99              144             .db %10011001 ;4
+007C-92              145             .db %10010010 ;5
+007D-82              146             .db %10000010 ;6
+007E-F8              147             .db %11111000 ;7
+007F-80              148             .db %10000000 ;8
+0080-90              149             .db %10010000 ;9
+0081-                150
+0081-                151     ;Uses R0,R1,R4
+0081-                152     display_update:
+0081-9A C0           153 (2)         anl P2,#%11000000 ;Turn off all displays
+0083-                154             ;switch(display_pointer)
+0083-FC              155 (1)         mov A,R4 ;A = R4 -> C = (R4 == 0)
+0084-C6 99           156 (2)         jz disp_hr_tens ;case 0
+0086-                157
+0086-37              158 (1)         cpl A
+0087-17              159 (1)         inc A ;A = -R4
+0088-                160
+0088-17              161 (1)         inc A ;A = -R4+1 -> C = (R4 == 1)
+0089-C6 A9           162 (2)         jz disp_hr_ones ;case 1
+008B-                163
+008B-17              164 (1)         inc A ;A = -R4+2 -> C = (R4 == 2)
+008C-C6 B9           165 (2)         jz disp_min_tens ;case 2
+008E-                166
+008E-17              167 (1)         inc A ;A = -R4+3 -> C = (R4 == 3)
+008F-C6 C9           168 (2)         jz disp_min_ones ;case 3
+0091-                169
+0091-17              170 (1)         inc A ;A = -R4+4 -> C = (R4 == 4)
+0092-C6 D9           171 (2)         jz disp_sec_tens ;case 4
+0094-                172
+0094-17              173 (1)         inc A ;A = -R4+5 -> C = (R4 == 5)
+0095-C6 E9           174 (2)         jz disp_sec_ones ;case 5
+0097-                175
+0097-04 F6           176 (2)         jmp ptr_reset ;default
+0099-                177
+0099-                178     disp_hr_tens:
+0099-B8 20           179 (2)         mov R0,#hr
+009B-F0              180 (1)         mov A,@R0
+009C-A8              181 (1)         mov R0,A ;Store hr value in R0
+009D-14 FE           182 (2)         call byte_split ;Split number
+009F-23 77           183 (2)         mov A,#digits ;Load address of digits code array into A
+00A1-69              184 (1)         add A,R1 ;Add tens to compute needed digit code position
+00A2-A3              185 (2)         movp A,@A ;Obtain digit code
+00A3-39              186 (2)         outl P1,A ;Write code to cathodes port
+00A4-8A 20           187 (2)         orl P2,#%00100000 ;Turn on first display
+00A6-1C              188 (1)         inc R4 ;Select next display
+00A7-04 F8           189 (2)         jmp disp_colon ;Update colon
+00A9-                190
+00A9-                191     disp_hr_ones:
+00A9-B8 20           192 (2)         mov R0,#hr
+00AB-F0              193 (1)         mov A,@R0
+00AC-A8              194 (1)         mov R0,A ;Store hr value in R0
+00AD-14 FE           195 (2)         call byte_split ;Split number
+00AF-23 77           196 (2)         mov A,#digits ;Load address of digits code array into A
+00B1-68              197 (1)         add A,R0 ;Add ones to compute needed digit code position
+00B2-A3              198 (2)         movp A,@A ;Obtain digit code
+00B3-39              199 (2)         outl P1,A ;Write code to cathodes port
+00B4-8A 10           200 (2)         orl P2,#%00010000 ;Turn on second display
+00B6-1C              201 (1)         inc R4 ;Select next display
+00B7-04 F8           202 (2)         jmp disp_colon ;Update colon
+00B9-                203
+00B9-                204     disp_min_tens:
+00B9-B8 21           205 (2)         mov R0,#min
+00BB-F0              206 (1)         mov A,@R0
+00BC-A8              207 (1)         mov R0,A ;Store min value in R0
+00BD-14 FE           208 (2)         call byte_split ;Split number
+00BF-23 77           209 (2)         mov A,#digits ;Load address of digits code array into A
+00C1-69              210 (1)         add A,R1 ;Add tens to compute needed digit code position
+00C2-A3              211 (2)         movp A,@A ;Obtain digit code
+00C3-39              212 (2)         outl P1,A ;Write code to cathodes port
+00C4-8A 08           213 (2)         orl P2,#%00001000 ;Turn on third display
+00C6-1C              214 (1)         inc R4 ;Select next display
+00C7-04 F8           215 (2)         jmp disp_colon ;Update colon
+00C9-                216
+00C9-                217     disp_min_ones:
+00C9-B8 21           218 (2)         mov R0,#min
+00CB-F0              219 (1)         mov A,@R0
+00CC-A8              220 (1)         mov R0,A ;Store min value in R0
+00CD-14 FE           221 (2)         call byte_split ;Split number
+00CF-23 77           222 (2)         mov A,#digits ;Load address of digits code array into A
+00D1-68              223 (1)         add A,R0 ;Add ones to compute needed digit code position
+00D2-A3              224 (2)         movp A,@A ;Obtain digit code
+00D3-39              225 (2)         outl P1,A ;Write code to cathodes port
+00D4-8A 04           226 (2)         orl P2,#%00000100 ;Turn on fourth display
+00D6-1C              227 (1)         inc R4 ;Select next display
+00D7-04 F8           228 (2)         jmp disp_colon ;Update colon
+00D9-                229
+00D9-                230     disp_sec_tens:
+00D9-B8 22           231 (2)         mov R0,#sec
+00DB-F0              232 (1)         mov A,@R0
+00DC-A8              233 (1)         mov R0,A ;Store sec value in R0
+00DD-14 FE           234 (2)         call byte_split ;Split number
+00DF-23 77           235 (2)         mov A,#digits ;Load address of digits code array into A
+00E1-69              236 (1)         add A,R1 ;Add tens to compute needed digit code position
+00E2-A3              237 (2)         movp A,@A ;Obtain digit code
+00E3-39              238 (2)         outl P1,A ;Write code to cathodes port
+00E4-8A 02           239 (2)         orl P2,#%00000010 ;Turn on fifth display
+00E6-1C              240 (1)         inc R4 ;Select next display
+00E7-04 F8           241 (2)         jmp disp_colon ;Update colon
+00E9-                242
+00E9-                243     disp_sec_ones:
+00E9-B8 22           244 (2)         mov R0,#sec
+00EB-F0              245 (1)         mov A,@R0
+00EC-A8              246 (1)         mov R0,A ;Store sec value in R0
+00ED-14 FE           247 (2)         call byte_split ;Split number
+00EF-23 77           248 (2)         mov A,#digits ;Load address of digits code array into A
+00F1-68              249 (1)         add A,R0 ;Add ones to compute needed digit code position
+00F2-A3              250 (2)         movp A,@A ;Obtain digit code
+00F3-                251             ;Close table after last movp - if whole table and all
+00F3-                252             ;movps are not on the same page, assembler will raise an error
+00F3-                253             .ct
+00F3-39              254 (2)         outl P1,A ;Write code to cathodes port
+00F4-8A 01           255 (2)         orl P2,#%00000001 ;Turn on sixth display
+00F6-                256     ptr_reset:
+00F6-BC 00           257 (2)         mov R4,#0 ;Select first display
+00F8-                258     disp_colon:
+00F8-FE              259 (1)         mov A,R6
+00F9-C6 FD           260 (2)         jz disp_end ;If colon state is zero, leave colon turned off
+00FB-99 7F           261 (2)         anl P1,#%01111111 ;Otherwise turn it on
+00FD-                262     disp_end:
+00FD-83              263 (2)         ret
+00FE-                264
+00FE-                265     ;R0 - value to be split to digits, ones; R1 - tens; uses R0,R1
+00FE-                266     byte_split:
+00FE-B9 00           267 (2)         mov R1,#0 ;Clear tens
+0100-                268     div10:
+0100-F8              269 (1)         mov A,R0 ;Load value to be split to A
+0101-37              270 (1)         cpl A ;Complement A
+0102-03 0A           271 (2)         add A,#10 ;Add 10 (C = (R0 < 10))
+0104-F6 0B           272 (2)         jc div10_end ;If there has been carry - break
+0106-37              273 (1)         cpl A ;Complement A (A=R2-10)
+0107-A8              274 (1)         mov R0,A ;Store new value in R0
+0108-19              275 (1)         inc R1 ;Increment tens
+0109-24 00           276 (2)         jmp div10 ;Perform again, until R0 < 10
+010B-                277     div10_end:
+010B-83              278 (2)         ret
+010C-                279
+010C-                280     ;Uses R0,R4,R5,R6,R7
+010C-                281     startup_init:
+010C-23 00           282 (2)         mov A,#0 ;Set A to 0, it will be needed to clear all time countdown related registers and variables
+010E-                283
+010E-B8 20           284 (2)         mov R0,#hr
+0110-A0              285 (1)         mov @R0,A ;Clear hours
+0111-                286
+0111-B8 21           287 (2)         mov R0,#min
+0113-A0              288 (1)         mov @R0,A ;Clear minutes
+0114-                289
+0114-B8 22           290 (2)         mov R0,#sec
+0116-A0              291 (1)         mov @R0,A ;Clear seconds
+0117-                292
+0117-3A              293 (2)         outl P2,A ;Turn off all displays
+0118-AC              294 (1)         mov R4,A ;Clear display pointer (select first one)
+0119-AD              295 (1)         mov R5,A ;Clear interrupt counter 8 LSBs
+011A-AE              296 (1)         mov R6,A ;Clear interrupt counter 9th bit
+011B-AF              297 (1)         mov R7,A ;Clear interrupt flag
+011C-                298
+011C-25              299 (1)         en tcnti ;Enable timer interrupt
+011D-34 21           300 (2)         call timer_reload ;Set timer register initial value
+011F-55              301 (1)         strt T ;Start timer
+0120-83              302 (2)         ret
+0121-                303
+0121-                304     ;No registers used
+0121-                305     timer_reload:
+0121-23 D8           306 (2)         mov A,#timer_init_val
+0123-62              307 (1)         mov T,A ;Set timer register initial value
+0124-83              308 (2)         ret
+0125-                309
+0125-                310     ;Uses R7
+0125-                311     timer_isr:
+0125-34 21           312 (2)         call timer_reload ;Set timer register initial value
+0127-1F              313 (1)         inc R7 ;Fastest way to set interrupt flag
+0128-93              314 (2)         retr
